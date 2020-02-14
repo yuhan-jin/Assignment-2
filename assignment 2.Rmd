@@ -1,0 +1,303 @@
+---
+title: "Untitled"
+author: "yuhanjin"
+date: "2020/2/11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library( tidyverse )
+library( haven )
+library( lmtest )
+library( cobalt )
+library( sandwich )
+library(dplyr) 
+library(knitr)
+library(plm)
+```
+
+
+```{r}
+og_data <- read_dta( "CHDV_30102_ECLS-K_class_size.dta" )
+
+
+anal_data <- og_data
+
+summary(anal_data)
+
+```
+
+```{r}
+# Drop treatment and outcome missingness
+anal_data <- filter( anal_data, !is.na( A4CLSIZE ), !is.na( C4RRSCAL ), !C4RRSCAL %in% c( -1, -9 ) )
+
+# deal with the missingness 
+anal_data$RACE_MISS <- ifelse( anal_data$RACE %in% c( -1, -9 ), 1, 0 )
+anal_data$C1RRSCAL_MISS <- ifelse( anal_data$C1RRSCAL %in% c( -1, -9 ), 1, 0 )
+anal_data$C2RRSCAL_MISS <- ifelse( anal_data$C2RRSCAL %in% c( -1, -9 ), 1, 0 )
+anal_data$B4YRSTC_MISS <- ifelse( anal_data$B4YRSTC %in% c( -1, -9 ), 1, 0 )
+
+# create a six-category variable “race6”
+anal_data$RACE6 <- ifelse(anal_data$RACE == 3 | anal_data$RACE == 4, 3,
+                          ifelse(anal_data$RACE == 5 | anal_data$RACE == 6, 4,
+                                 ifelse(anal_data$RACE == 7,5,
+                                        ifelse(anal_data$RACE == 8 | anal_data$RACE == -9, 6,
+                                               anal_data$RACE))))
+
+
+anal_data$RACE <- ifelse( anal_data$RACE_MISS == 1, 1, anal_data$RACE)
+anal_data$C1RRSCAL <- ifelse( anal_data$C1RRSCAL_MISS == 1,
+                              mean( filter( anal_data, C1RRSCAL_MISS != 1 )$C1RRSCAL, na.rm = T ),
+                              anal_data$C1RRSCAL )
+anal_data$C2RRSCAL <- ifelse( anal_data$C2RRSCAL_MISS == 1,
+                              mean( filter(anal_data, C2RRSCAL_MISS != 1 )$C2RRSCAL, na.rm = T ),
+                              anal_data$C2RRSCAL )
+anal_data$B4YRSTC <- ifelse( anal_data$B4YRSTC_MISS == 1,
+                              mean( filter(anal_data, B4YRSTC_MISS != 1 )$B4YRSTC, na.rm = T ),
+                              anal_data$B4YRSTC )
+anal_data
+```
+
+```{r}
+anal_data$Z <- as.numeric( anal_data$A4CLSIZE <= 19 )
+
+
+```
+
+# Question 1
+```{r}
+# the mean difference in grade 1 literacy achievement (C4RRSCAL) between students attending small classes 
+
+mean_small <- mean(anal_data$C4RRSCAL[anal_data$Z == 1], 
+                   na.rm = TRUE)
+mean_small
+mean_regular <- mean(anal_data$C4RRSCAL[anal_data$Z == 0], 
+                    na.rm = TRUE)
+mean_regular 
+sample_mean_dif <- mean_small - mean_regular
+sample_mean_dif
+
+
+pooled_data <- pdata.frame( anal_data, index = c( "s4_id" ), row.names = F )
+
+# Pooled regression results with clustered standard errors (not Hube  r White)
+simple.model <- plm( C4RRSCAL ~ Z, data = pooled_data, model = "pooling" )
+summary( simple.model, robust = T )
+  
+# Calculate variance covariance matrix for Huber-White robust errors
+G <- length( unique( pooled_data$s4_id ) )
+N <- length( pooled_data$s4_id )
+dfa <- ( G / ( G - 1 ) ) * ( N - 1 ) / simple.model$df.residual
+pooled_vcov <- dfa * vcovHC( simple.model, cluster = "group", adjust = T )
+
+# Coefficient test
+coeftest( simple.model, vcov = pooled_vcov )
+# Wald test
+waldtest( simple.model, vcov = pooled_vcov, test = "F" )
+# Compute effect size of treatment by calculating SD of control group
+control_sd <- sd( anal_data[ anal_data$Z == 0, ]$C4RRSCAL )
+eff_size <- simple.model$coefficients[ 2 ] / control_sd
+```
+
+# Question 3 
+```{r}
+# decide whether the propensity score model should include the linear and quadratic terms of a covariate
+# calculate the variance of covariates of the treated group and the control group 
+# C1RRSCAL
+(C1RRSCAL_Var_control <- var(anal_data$C1RRSCAL[anal_data$Z == 0], na.rm = T))
+(C1RRSCAL_Var_treated <- var(anal_data$C1RRSCAL[anal_data$Z == 1], na.rm = T))
+# C2RRSCAL
+(C2RRSCAL_Var_control <- var(anal_data$C2RRSCAL[anal_data$Z == 0], na.rm = T))
+(C2RRSCAL_Var_treated <- var(anal_data$C2RRSCAL[anal_data$Z == 1], na.rm = T))
+# B4YRSTC
+(B4YRSTC_Var_control <- var(anal_data$B4YRSTC[anal_data$Z == 0], na.rm = T))
+(B4YRSTC_Var_treated <- var(anal_data$B4YRSTC[anal_data$Z == 1], na.rm = T))
+```
+
+```{r}
+#check if the model should include the product of two covariates if their correlation is different between the treated group and the control group
+# C1RRSCAL and C2RRSCAL
+(C1RRSCAL_C2RRSCAL_control <- cor(!is.na(anal_data$C1RRSCAL[anal_data$Z == 0]), !is.na(anal_data$C2RRSCAL[anal_data$Z == 0])))
+(C1RRSCAL_C2RRSCAL_treated <- cor(!is.na(anal_data$C1RRSCAL[anal_data$Z == 1]), !is.na(anal_data$C2RRSCAL[anal_data$Z == 1])))
+
+# C1RRSCAL and B4YRSTC
+(C1RRSCAL_B4YRSTC_control <- cor(!is.na(anal_data$C1RRSCAL[anal_data$Z == 0]), !is.na(anal_data$B4YRSTC[anal_data$Z == 0])))
+(C1RRSCAL_B4YRSTC_treated <- cor(!is.na(anal_data$C1RRSCAL[anal_data$Z == 1]), !is.na(anal_data$B4YRSTC[anal_data$Z == 1])))
+
+# C2RRSCAL and B4YRSTC
+(C2RRSCAL_B4YRSTC_control <- cor(!is.na(anal_data$C2RRSCAL[anal_data$Z == 0]), !is.na(anal_data$B4YRSTC[anal_data$Z == 0])))
+(C2RRSCAL_B4YRSTC_treated <- cor(!is.na(anal_data$C2RRSCAL[anal_data$Z == 1]), !is.na(anal_data$B4YRSTC[anal_data$Z == 1])))
+```
+
+
+
+```{r}
+## STEP 2: BUILD A LOGISTIC REGRESSION MODEL
+
+prop.model <- glm( Z ~ GENDER + RACE6  + C1RRSCAL  + C1RRSCAL_MISS +
+                     C2RRSCAL  + C2RRSCAL_MISS + B4YRSTC + B4YRSTC_MISS,
+                   family = binomial( link = "logit" ), data = anal_data )
+summary( prop.model )
+
+# Given this regression, we're not going to get logit scores with some of our NA categories
+anal_data1 <- filter( anal_data, !is.na( C1RRSCAL ), !is.na( C2RRSCAL ), !is.na( B4YRSTC ) )
+
+# Logit Scores
+anal_data1$logit <- predict( prop.model, type = "link" )
+
+# Probability of Treatment
+anal_data1$pred <- predict( prop.model, type = "response" )
+```
+
+```{r}
+## STEP 3: IDENTIFY THE COMMON SUPPORT
+
+ggplot(anal_data1 ) +
+  geom_histogram( aes( x = logit, fill = factor( Z ) ), alpha = 0.5 )
+ggplot( filter( anal_data1, Z == 0 ) ) +
+  geom_histogram( aes( x = logit ) )
+ggplot( filter( anal_data1, Z == 1 ) ) +
+  geom_histogram( aes( x = logit ) )
+ggplot( anal_data1 ) +
+  geom_density( aes( x = logit, color = factor( Z ) ), alpha = 0.5 )
+
+summary( filter( anal_data1, Z == 0 )$logit )
+summary( filter( anal_data1, Z == 1 )$logit )
+
+
+# Set the calipers and find common support
+min_treat <- min( anal_data1[ anal_data1$Z == 1, ]$logit )
+min_cont <- min( anal_data1[ anal_data1$Z == 0, ]$logit )
+max_treat <- max( anal_data1[ anal_data1$Z == 1, ]$logit )
+max_cont <- max( anal_data1[ anal_data1$Z == 0, ]$logit )
+caliper <- 0.2 * sd( anal_data1$logit ) # Caliper set to 20% of the standard deviation
+
+anal_data2 <- anal_data1[ anal_data1$logit > max( min_treat, min_cont ) - caliper &
+                          anal_data1$logit < min( max_treat, max_cont ) - caliper, ]
+
+
+ggplot(anal_data2) +
+  geom_density(aes( x = logit, color = factor( Z ) ), alpha = 0.5 )
+```
+
+# Question 4
+
+```{r}
+treat_data <- anal_data2[anal_data2$Z == 1, ]
+treat_data$id <- seq( 1, nrow( treat_data), by = 1)
+cont_data <- anal_data2[ anal_data2$Z == 0, ]
+matched_data <- treat_data
+# For every treated unit, find the matched unit with the closest logit value
+for( i in 1:nrow( treat_data ) ) {
+  logit_val <- treat_data[ i, ]$logit
+  data_id <- treat_data[ i, ]$id
+  closest <- min( abs( logit_val - cont_data$logit ) )
+  index <- which( abs( logit_val - cont_data$logit ) == closest )
+  match <- cont_data[ index[ 1 ], ]
+  match$id <- data_id
+  matched_data <- rbind( matched_data, match )
+}
+```
+
+```{r}
+# Estimate effects
+# ATT estimate
+matched_data %>%
+  group_by( id ) %>%
+  arrange( Z ) %>%
+  summarize( att = diff( C4RRSCAL ) ) %>%
+  ungroup() %>%
+  summarize( mean( att ) )
+```
+
+```{r}
+## STEP 5: CHECK BALANCE
+
+# Checking Balance on logit
+ggplot( matched_data, aes( x = logit, fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = logit, color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$logit ~ matched_data$Z )
+summary( lm( logit ~ Z, data = matched_data ) )
+
+# Checking Balance on Covariates
+
+# GENDER
+ggplot( matched_data, aes( x = GENDER, fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = GENDER, color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$GENDER ~ matched_data$Z )
+
+#RACE
+ggplot( matched_data, aes( x = RACE6 , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = RACE6 , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$RACE6  ~ matched_data$Z )
+
+#C1RRSCAL
+ggplot( matched_data, aes( x = C1RRSCAL , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = C1RRSCAL , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$C1RRSCAL  ~ matched_data$Z )
+
+#C2RRSCAL
+ggplot( matched_data, aes( x = C2RRSCAL , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = C2RRSCAL , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$C2RRSCAL  ~ matched_data$Z )
+
+#B4YRSTC
+ggplot( matched_data, aes( x = B4YRSTC , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = B4YRSTC , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$B4YRSTC  ~ matched_data$Z)
+```
+```{r}
+# compare the standardized difference and the variance ratio before and after matching
+
+bal.tab(Z ~ GENDER + RACE6 + C1RRSCAL + C1RRSCAL_MISS + C2RRSCAL + C2RRSCAL_MISS + B4YRSTC + B4YRSTC_MISS,
+        data = matched_data, estimand = "ATT", m.threshold = 0.1,
+        disp.v.ratio = TRUE)
+
+
+```
+
+```{r}
+# use the matched sample to estimate the effect of class size type on grade 1 literacy achievement.
+att.m <- lm( C4RRSCAL ~ Z, data = matched_data )
+( test <- coeftest( att.m, vcov = vcovHC( att.m ) ) )
+
+
+pooled_data1 <- pdata.frame( matched_data, index = c( "s4_id" ), row.names = F )
+
+# Pooled regression results with clustered standard errors (not Hube  r White)
+simple.model <- plm( C4RRSCAL ~ Z, data = pooled_data1, model = "pooling" )
+summary( att.m, robust = T )
+  
+# Calculate variance covariance matrix for Huber-White robust errors
+G <- length( unique( pooled_data1$s4_id ) )
+N <- length( pooled_data1$s4_id )
+dfa <- ( G / ( G - 1 ) ) * ( N - 1 ) / att.m$df.residual
+pooled_vcov <- dfa * vcovHC( att.m, cluster = "group", adjust = T )
+
+# Coefficient test
+coeftest( att.m, vcov = vcovHC( att.m ) )
+# Wald test
+waldtest( att.m, vcov = vcovHC( att.m ), test = "F" )
+
+# Compute effect size of treatment by calculating SD of control group
+(control_sd <- sd( matched_data[ matched_data$Z == 0, ]$C4RRSCAL ))
+(eff_size <- att.m$coefficients[ 2 ] / control_sd)
+```
+#Question 6 
+
+```{r}
+
+```
+
