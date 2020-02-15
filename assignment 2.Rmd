@@ -257,6 +257,27 @@ ggplot( matched_data, aes( x = B4YRSTC , fill = factor( Z ) ) ) +
 ggplot( matched_data, aes( x = B4YRSTC , color = factor( Z ) ) ) +
   geom_density( alpha = 0.2 )
 t.test( matched_data$B4YRSTC  ~ matched_data$Z)
+
+#C1RRSCAL_MISS
+ggplot( matched_data, aes( x = C1RRSCAL_MISS , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = C1RRSCAL_MISS , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$C1RRSCAL_MISS  ~ matched_data$Z)
+
+#C2RRSCAL_MISS
+ggplot( matched_data, aes( x = C2RRSCAL_MISS , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = C2RRSCAL_MISS , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$C2RRSCAL_MISS  ~ matched_data$Z)
+
+# B4YRSTC_MISS
+ggplot( matched_data, aes( x = B4YRSTC_MISS , fill = factor( Z ) ) ) +
+  geom_histogram( binwidth = 0.5, position = "dodge" )
+ggplot( matched_data, aes( x = B4YRSTC_MISS , color = factor( Z ) ) ) +
+  geom_density( alpha = 0.2 )
+t.test( matched_data$B4YRSTC_MISS  ~ matched_data$Z)
 ```
 ```{r}
 # compare the standardized difference and the variance ratio before and after matching
@@ -298,6 +319,28 @@ waldtest( att.m, vcov = vcovHC( att.m ), test = "F" )
 #Question 6 
 
 ```{r}
+# STEP 4: CALCULATE WEIGHTS
+
+# Assign ATT weights
+anal_data2$W_ATT <- ifelse( anal_data2$Z == 1, 1, ( ( 1 - mean( anal_data2$Z ) ) / mean( anal_data2$Z ) ) *
+                             ( anal_data2$pred / ( 1 - anal_data2$pred ) ) )
+
+
+
+
+## STEP 5: CHECK CONVERGENCE
+
+mean( anal_data2$W_ATT )
+```
+```{r}
+# Balance on logit
+summary( lm( logit ~ Z, weights = W_ATT, data = anal_data2 ) )
+# Balance on covariates
+  # Discrete
+summary( glm( I( GENDER == 1 ) ~ Z, weights = W_ATT, data = anal_data2, family = "binomial" ) )
+  # Continuous
+summary( lm( C1RRSCAL ~ Z, weights = W_ATT, data = anal_data2 ) )
+
 
 ```
 
